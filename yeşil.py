@@ -46,7 +46,8 @@ for i, row in df.iterrows():
     lat, lon = map(float, row['koordinat(yatay, dikey)'].split(','))
     folium.Marker(
         location=[lat, lon],
-        popup=row['mahalle adı']
+        popup=row['MAHAL ADI']
+
     ).add_to(m)
 
 # Save the map to an HTML file
