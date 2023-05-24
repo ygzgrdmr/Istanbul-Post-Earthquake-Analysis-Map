@@ -3,53 +3,32 @@ import json
 from shapely.geometry import shape
 import base64
 import csv
+import io
+import matplotlib.pyplot as plt
 import pandas as pd
-from unidecode import unidecode
-
-# Function to insert image to HTML
-def insert_image_to_html(input_file, output_file, image_file):
-    with open(input_file, 'r') as f:
-        html_content = f.read()
-
-    image_data_url = image_to_data_url(image_file)
-    image_tag = f'''
-        <style>
-            img.responsive-image {{ position:absolute; top:10px; right:10px; z-index:999; width:450px; height:200px; }}
-        </style>
-        <img id="dynamicImage" class="responsive-image" src="{image_data_url}">
-        <script>
-            document.addEventListener("DOMContentLoaded", function() {{
-                var map = L.DomUtil.get('map');
-                var dynamicImage = document.getElementById("dynamicImage");
-                L.DomEvent.on(map, "zoomend", function(event) {{
-                    var zoomLevel = map._leaflet_map.getZoom();
-                    dynamicImage.style.width = (100 - zoomLevel * 5) + "px";
-                    dynamicImage.style.height = (100 - zoomLevel * 5) + "px";
-                }});
-            }});
-        </script>
-        '''
-
-    # Insert the image tag after the opening body tag
-    modified_html = html_content.replace('<body>', f'<body>{image_tag}', 1)
-
-    with open(output_file, 'w') as f:
-        f.write(modified_html)
-
-# Function to convert image to data URL
-def image_to_data_url(filepath):
-    with open(filepath, "rb") as image_file:
-        return "data:image/png;base64," + base64.b64encode(image_file.read()).decode()
-
+import math
+from PIL import Image
+import base64
+from io import BytesIO
 # Load the GeoJSON file with Istanbul district boundaries
 with open('istanbul-districts.json', 'r') as f:
     istanbul_geojson = json.load(f)
 
-
+def image_to_data_url(png_path):
+    # Open an image file
+    with Image.open(png_path) as img:
+        # Convert the image to RGBA to ensure it's compatible
+        img = img.convert("RGBA")
+        # Resize the image if it's too big. Adjust the size as needed.
+        img.thumbnail((32, 32))
+        # Create a BytesIO object and save the image to it
+        buffered = BytesIO()
+        img.save(buffered, format="PNG")
+        # Create a data URL
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/png;base64,{img_str}"
 
 # Create a dictionary with district names as keys and earthquake statistics as values
-
-
 earthquake_stats = {
     "Adalar": {}, "Arnavutköy": {}, "Ataşehir": {},
     "Avcılar": {}, "Bağcılar": {},
@@ -70,7 +49,14 @@ def normalize_district_name(name):
 
     return normalized_name
 
-
+def in_istanbul(row, lat_name, lon_name):
+    coordinates = row[lat_name]
+    mahal_adi = row['MAHAL ADI']
+    if coordinates is not None and len(coordinates) == 2:
+        lat, lon = coordinates
+        if (40.8121 <= lat <= 41.3613 and 28.5461 <= lon <= 29.5377) and not mahal_adi.startswith('ORTA MAHALLE'):
+            return True
+    return False
 
 # Function to update earthquake stats for a district
 def update_earthquake_stats(district, stats):
@@ -98,8 +84,135 @@ with open('deprem-senaryosu-analiz-sonuclar.csv', 'r', encoding='windows-1254') 
         }
         update_earthquake_stats(district, stats)
 
+def plot_graph(data, title):
+    fig, ax = plt.subplots(figsize=(6, 6))  # Adjust the figsize as per your preference
+    data.plot(kind='bar', ax=ax)
+    ax.set_title(title)
+    ax.tick_params(axis='x', labelrotation=0)  # Reset labelrotation parameter
+    ax.set_xticklabels(data.index, rotation=45, ha='right')  # Rotate and align x-axis labels
+
+    for i, value in enumerate(data):
+        ax.text(i, value, str(value), ha='right', va='bottom')
+
+    plt.tight_layout()  # Adjust layout to prevent cropping
+    plt.close(fig)
+    return fig
+
+
+
+def fig_to_html(fig):
+    # Convert plot to PNG image
+    img = io.BytesIO()
+    fig.savefig(img, format='png')
+    img.seek(0)
+
+    # Convert PNG image to base64 string
+    img_base64 = base64.b64encode(img.getvalue()).decode('utf-8')
+    html = f'<img src="data:image/png;base64,{img_base64}" style="max-width: 400%; height: auto;">'
+    return html
+
+
+def plot_graphs(district):
+    groups = [
+        ['Çok Ağır Hasarlı Bina Sayısı', 'Ağır Hasarlı Bina Sayısı', 'Orta Hasarlı Bina Sayısı',
+         'Hafif Hasarlı Bina Sayısı'],
+        ['Can Kaybı Sayısı', 'Ağır Yaralı Sayısı', 'Hastanede Tedavi Sayısı', 'Hafif Yaralı Sayısı'],
+        ['1980_oncesi', '1980-2000_arasi', '2000_sonrasi', '1-4 kat_arasi', '5-9 kat_arasi', '9-19 kat_arasi']
+    ]
+    group_names = ['Building Damage', 'Human Impact', 'Building Categories']
+
+    html = ''
+    for group_name, group in zip(group_names, groups):
+        building_info_district = building_info[building_info['ilce_adi'] == district]
+        print(f'Building info for district {district}:\n{building_info_district}\n')  # Debug print
+
+        # Summing up the buildings per category
+        stats = building_info_district[group].sum()
+        print(f'Stats for district {district}:\n{stats}\n')  # Debug print
+
+        fig = plot_graph(stats, f'{group_name}: {district}')
+        html += fig_to_html(fig)
+        """
+        if group_name == 'Building Categories':
+            building_info_district = building_info[building_info['ilce_adi'] == district]
+            stats = building_info_district[group].sum().to_dict()
+        else:
+            stats = {key: earthquake_stats[district].get(key, 0) for key in group}
+
+        stats_series = pd.Series(stats)
+        fig = plot_graph(stats_series, f'{group_name}: {district}')
+        html += fig_to_html(fig)"""
+    return html
+
+
+def preprocess_coordinates(coordinates):
+    try:
+        if coordinates is not None and not (type(coordinates) == float and math.isnan(coordinates)):
+            coordinates_split = []
+            if "," in coordinates:
+                coordinates_split = coordinates.split(',')
+                for i in range(len(coordinates_split)):
+                    try:
+                        coordinates_split[i] = float(coordinates_split[i].strip())
+                    except ValueError:
+                        return None
+            elif '\n' in coordinates:
+                coordinates_split = coordinates.split('\n')
+                for i in range(len(coordinates_split)):
+                    try:
+                        coordinates_split[i] = float(coordinates_split[i].strip())
+                    except ValueError:
+                        return None
+            else:
+                coordinates_split = coordinates.strip().split(' ')
+                for i in range(len(coordinates_split)):
+                    try:
+                        coordinates_split[i] = float(coordinates_split[i].strip())
+                    except ValueError:
+                        return None
+            return coordinates_split
+    except:
+        pass
+    return None
+
+# Function to update earthquake stats for a district
+def update_earthquake_stats(district, stats):
+    for key, value in stats.items():
+        if key not in earthquake_stats[district]:
+            earthquake_stats[district][key] = 0
+        earthquake_stats[district][key] += value
+
+    # Add the building data
+    earthquake_stats[district]['buildings'] = building_info_by_district.get(district, 0)
+
 # Create a map centered on Istanbul
-istanbul_map = folium.Map(location=[41.0082, 28.9784], zoom_start=9)
+
+df = pd.read_excel('park-ve-yeil-alan-koordinatlar.xlsx')
+# Your park data code here
+parks_layer = folium.FeatureGroup(name='Parks')
+df = df.dropna(subset=['KOORDİNAT (Yatay , Dikey)'])
+koordinat = df['KOORDİNAT (Yatay , Dikey)']
+koordinat = koordinat.apply(preprocess_coordinates)
+df['KOORDİNAT (Yatay , Dikey)'] = koordinat
+
+
+df= df[df.apply(in_istanbul, args=('KOORDİNAT (Yatay , Dikey)', 'KOORDİNAT (Yatay , Dikey)'), axis=1)]
+df = df[df['TÜR'] == 'PARK']
+# Create a map centered on Istanbul
+m = folium.Map(location=[41.0082, 28.9784], zoom_start=9)
+
+# Add earthquake stats layer
+building_info = pd.read_csv('2017-yl-mahalle-bazl-bina-saylar.csv', encoding='windows-1254', sep=';')
+#print(building_info.columns)
+#print(building_info.head())
+# Aggregate building data by district
+building_info['total_buildings'] =building_info['1980_oncesi'] + building_info['1980-2000_arasi'] + building_info['2000_sonrasi'] + building_info['1-4 kat_arasi'] + building_info['5-9 kat_arasi'] + building_info['9-19 kat_arasi']
+
+building_info_by_district = building_info.groupby('ilce_adi')['total_buildings'].sum().to_dict()
+
+
+earthquake_stats_layer = folium.FeatureGroup(name='Earthquake Stats')
+
 
 # Add district boundaries to the map
 folium.GeoJson(
@@ -112,63 +225,33 @@ folium.GeoJson(
     },
     highlight_function=lambda x: {'weight': 3, 'fillOpacity': 0.6},
     tooltip=folium.GeoJsonTooltip(fields=['name'], labels=False),
-    popup=folium.GeoJsonPopup(
-        fields=['name'],
-        labels=False,
-        style="background-color: white;",
-        popup_classname="folium-popup-content",
-        parse_html=False,
-        max_width="400",
-        show=False,
-    ),
-).add_to(istanbul_map)
+).add_to(m)
+
 
 
 for feature in istanbul_geojson['features']:
     district_name = feature['properties']['name']
     if district_name in earthquake_stats:
-        geom = shape(feature['geometry'])  # Convert GeoJSON to Shapely geometry
-        centroid = geom.centroid  # Calculate centroid of the geometry
+        html = plot_graphs(district_name)
+        folium.Popup(html, max_width=400).add_to(folium.GeoJson(data=feature).add_to(earthquake_stats_layer))
 
-        lat, lng = centroid.y, centroid.x
-        popup_text = f"İlçe: {district_name}<br>Deprem Bilgileri {earthquake_stats[district_name]}"
-        folium.Marker(
-            location=[lat, lng],
-            icon=None,
-            popup=folium.Popup(popup_text, max_width=400),
-        ).add_to(istanbul_map)
-# Save the map as an HTML file
-def image_to_data_url(filepath):
-    with open(filepath, "rb") as image_file:
-        return "data:image/png;base64," + base64.b64encode(image_file.read()).decode()
+earthquake_stats_layer.add_to(m)
 
-excel_data = pd.read_excel('park-ve-yeil-alan-koordinatlar.xlsx', engine='openpyxl')
-
-# Filter the rows based on the TÜR column
-filtered_data = excel_data[excel_data['TÜR'].isin(['PARK', 'KAMU', 'HATIRA ORMANI', 'KÖY PARKLARI'])]
-
-# Add the points to the Folium map
-count=0
-for index, row in filtered_data.iterrows():
-    tür = row['TÜR']
-    mahal_adi = row['MAHAL ADI']
-    ilce = row['İLÇE']
-    coordinates_string = row['KOORDİNAT (Yatay , Dikey)'].replace('\n', '')
-    print(f"counter: {count}, coordinat string {coordinates_string}")
-    count+=1
-
-    lat, lng = map(float, row['KOORDİNAT (Yatay , Dikey)'].replace('\n', '').split(','))
-
-
+# Add parks layer
+icon_url = image_to_data_url("acil_toplanma.png")
+for i, row in df.iterrows():
+    lat, lon = row['KOORDİNAT (Yatay , Dikey)'][0], row['KOORDİNAT (Yatay , Dikey)'][1]
     folium.Marker(
-        location=[lat, lng],
-        icon=folium.Icon(icon='tree', prefix='fa', color='green'),
-        popup=f"{tür}: {mahal_adi}<br>İlçe: {ilce}",
-    ).add_to(istanbul_map)
+        location=[lat, lon],
+        popup=row['MAHAL ADI'],
+        icon = folium.CustomIcon(icon_url, icon_size=(30, 30))  # Set the icon URL and size
+    ).add_to(parks_layer)
 
-# Add the image from the local folder
-# Replace 'image.png' with the file name of your image
 
-istanbul_map.save('istanbul_map_temp.html')
 
-insert_image_to_html('istanbul_map_temp.html', 'istanbul_map.html', 'bina_hasarlar.png')
+parks_layer.add_to(m)
+
+# Add layer control
+folium.LayerControl().add_to(m)
+
+m.save('istanbul_map_temp.html')
