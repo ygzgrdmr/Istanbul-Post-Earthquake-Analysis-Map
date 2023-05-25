@@ -223,13 +223,13 @@ for feature in istanbul_geojson['features']:
 earthquake_stats_layer.add_to(m)
 
 # Add parks layer
-icon_url = image_to_data_url("acil_toplanma.png")
+icon_url = image_to_data_url("park.png")
 for i, row in df.iterrows():
     lat, lon = row['KOORDİNAT (Yatay , Dikey)'][0], row['KOORDİNAT (Yatay , Dikey)'][1]
     folium.Marker(
         location=[lat, lon],
         popup=row['MAHAL ADI'],
-        icon = folium.CustomIcon(icon_url, icon_size=(30, 30))  # Set the icon URL and size
+        icon = folium.CustomIcon(icon_url, icon_size=(25, 25))  # Set the icon URL and size
     ).add_to(parks_layer)
 
 parks_layer.add_to(m)
