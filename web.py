@@ -111,39 +111,41 @@ def fig_to_html(fig):
     html = f'<img src="data:image/png;base64,{img_base64}" style="max-width: 400%; height: auto;">'
     return html
 
+building_info=pd.read_csv('2017-yl-mahalle-bazl-bina-saylar.csv', encoding='windows-1254', sep=';')
 
+# Normalize the district name
+building_info['ilce_adi'] = building_info['ilce_adi'].apply(normalize_district_name)
+
+# Update earthquake_stats for each district with the new building info
+for i, row in building_info.iterrows():
+    district = row['ilce_adi']
+    stats = {
+        '1980_oncesi': int(row['1980_oncesi']),
+        '1980-2000_arasi': int(row['1980-2000_arasi']),
+        '2000_sonrasi': int(row['2000_sonrasi']),
+        '1-4 kat_arasi': int(row['1-4 kat_arasi']),
+        '5-9 kat_arasi': int(row['5-9 kat_arasi']),
+        '9-19 kat_arasi': int(row['9-19 kat_arasi']),
+    }
+    update_earthquake_stats(district, stats)
+
+# Update the plot_graphs function to include new graphs for the building info
 def plot_graphs(district):
     groups = [
-        ['Çok Ağır Hasarlı Bina Sayısı', 'Ağır Hasarlı Bina Sayısı', 'Orta Hasarlı Bina Sayısı',
-         'Hafif Hasarlı Bina Sayısı'],
+        ['Çok Ağır Hasarlı Bina Sayısı', 'Ağır Hasarlı Bina Sayısı', 'Orta Hasarlı Bina Sayısı', 'Hafif Hasarlı Bina Sayısı'],
         ['Can Kaybı Sayısı', 'Ağır Yaralı Sayısı', 'Hastanede Tedavi Sayısı', 'Hafif Yaralı Sayısı'],
-        ['1980_oncesi', '1980-2000_arasi', '2000_sonrasi', '1-4 kat_arasi', '5-9 kat_arasi', '9-19 kat_arasi']
+        ['1980_oncesi', '1980-2000_arasi', '2000_sonrasi'],
+        ['1-4 kat_arasi', '5-9 kat_arasi', '9-19 kat_arasi']
     ]
-    group_names = ['Building Damage', 'Human Impact', 'Building Categories']
+    group_names = ['Building Damage', 'Human Impact', 'Building Age Distribution', 'Building Floor Distribution']
 
     html = ''
     for group_name, group in zip(group_names, groups):
-        building_info_district = building_info[building_info['ilce_adi'] == district]
-        print(f'Building info for district {district}:\n{building_info_district}\n')  # Debug print
-
-        # Summing up the buildings per category
-        stats = building_info_district[group].sum()
-        print(f'Stats for district {district}:\n{stats}\n')  # Debug print
-
-        fig = plot_graph(stats, f'{group_name}: {district}')
-        html += fig_to_html(fig)
-        """
-        if group_name == 'Building Categories':
-            building_info_district = building_info[building_info['ilce_adi'] == district]
-            stats = building_info_district[group].sum().to_dict()
-        else:
-            stats = {key: earthquake_stats[district].get(key, 0) for key in group}
-
+        stats = {key: earthquake_stats[district].get(key, 0) for key in group}
         stats_series = pd.Series(stats)
         fig = plot_graph(stats_series, f'{group_name}: {district}')
-        html += fig_to_html(fig)"""
+        html += fig_to_html(fig)
     return html
-
 
 def preprocess_coordinates(coordinates):
     try:
@@ -175,18 +177,10 @@ def preprocess_coordinates(coordinates):
         pass
     return None
 
-# Function to update earthquake stats for a district
-def update_earthquake_stats(district, stats):
-    for key, value in stats.items():
-        if key not in earthquake_stats[district]:
-            earthquake_stats[district][key] = 0
-        earthquake_stats[district][key] += value
 
-    # Add the building data
-    earthquake_stats[district]['buildings'] = building_info_by_district.get(district, 0)
+
 
 # Create a map centered on Istanbul
-
 df = pd.read_excel('park-ve-yeil-alan-koordinatlar.xlsx')
 # Your park data code here
 parks_layer = folium.FeatureGroup(name='Parks')
@@ -202,15 +196,6 @@ df = df[df['TÜR'] == 'PARK']
 m = folium.Map(location=[41.0082, 28.9784], zoom_start=9)
 
 # Add earthquake stats layer
-building_info = pd.read_csv('2017-yl-mahalle-bazl-bina-saylar.csv', encoding='windows-1254', sep=';')
-#print(building_info.columns)
-#print(building_info.head())
-# Aggregate building data by district
-building_info['total_buildings'] =building_info['1980_oncesi'] + building_info['1980-2000_arasi'] + building_info['2000_sonrasi'] + building_info['1-4 kat_arasi'] + building_info['5-9 kat_arasi'] + building_info['9-19 kat_arasi']
-
-building_info_by_district = building_info.groupby('ilce_adi')['total_buildings'].sum().to_dict()
-
-
 earthquake_stats_layer = folium.FeatureGroup(name='Earthquake Stats')
 
 
@@ -246,8 +231,6 @@ for i, row in df.iterrows():
         popup=row['MAHAL ADI'],
         icon = folium.CustomIcon(icon_url, icon_size=(30, 30))  # Set the icon URL and size
     ).add_to(parks_layer)
-
-
 
 parks_layer.add_to(m)
 
